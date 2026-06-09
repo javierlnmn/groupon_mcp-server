@@ -8,14 +8,14 @@ import {
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth";
 import { DbClient } from "@/db/client";
 import { DbOAuthProvider } from "@/auth/provider";
+import { OAuthRepository } from "@/repositories/oauth-repository";
+import { mcpHandler, mcpSessionHandler } from "@/mcp/controllers";
 
 export function createServer(baseUrl: string) {
   const app = createMcpExpressApp();
 
-  const provider = new DbOAuthProvider(
-    DbClient.getInstance().connection,
-    baseUrl,
-  );
+  const connection = DbClient.getInstance().connection;
+  const provider = new DbOAuthProvider(new OAuthRepository(connection), baseUrl);
 
   app.use(
     mcpAuthRouter({
@@ -32,19 +32,17 @@ export function createServer(baseUrl: string) {
     provider.handleLogin,
   );
 
+  // MCP endpoint, protected by the Bearer guard. The guard rejects missing/
+  // invalid/expired tokens with 401 + a WWW-Authenticate header and populates
+  // req.auth (incl. req.auth.extra.role), which the handler uses to scope tools.
+  const guard = makeMcpAuthGuard(provider, baseUrl);
+  app.post("/mcp", guard, mcpHandler);
+  app.get("/mcp", guard, mcpSessionHandler);
+  app.delete("/mcp", guard, mcpSessionHandler);
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
-
-  // ── MCP route ────────────────────────────────────────────────────────────
-  // Left unwired on purpose: the src/mcp/ layer (controllers.ts / server.ts) is
-  // still a WIP. When it's ready, protect it with the Bearer guard below, e.g.:
-  //
-  //   import { mcpHandler } from "@/mcp/controllers";
-  //   app.post("/mcp", makeMcpAuthGuard(provider, baseUrl), mcpHandler);
-  //
-  // The guard rejects missing/invalid/expired tokens with 401 + a
-  // WWW-Authenticate header and populates req.auth (incl. req.auth.extra.userId).
 
   return app;
 }
