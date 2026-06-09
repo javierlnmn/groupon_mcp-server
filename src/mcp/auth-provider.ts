@@ -15,7 +15,7 @@ import {
   InvalidGrantError,
   InvalidTokenError,
 } from "@modelcontextprotocol/sdk/server/auth/errors";
-import { verifyPassword } from "@/auth/password";
+import { verifyPassword } from "@/utils/password";
 import type { OAuthRepository } from "@/repositories/oauth-repository";
 
 const AUTH_CODE_TTL_SECONDS = 60;
@@ -88,7 +88,7 @@ export class DbOAuthProvider implements OAuthServerProvider {
 
   /**
    * Handles the POST from the login form. Not part of the OAuthServerProvider
-   * interface — wired directly as the /login route in src/config/server.ts.
+   * interface — wired directly as the /login route in src/mcp/app.ts.
    */
   handleLogin = (req: Request, res: Response): void => {
     const body = req.body ?? {};
@@ -218,7 +218,13 @@ export class DbOAuthProvider implements OAuthServerProvider {
     const refreshToken = newToken();
     const expiresAt = nowSeconds() + ACCESS_TOKEN_TTL_SECONDS;
 
-    this.repo.saveToken({ accessToken, refreshToken, clientId, userId, expiresAt });
+    this.repo.saveToken({
+      accessToken,
+      refreshToken,
+      clientId,
+      userId,
+      expiresAt,
+    });
 
     return {
       access_token: accessToken,

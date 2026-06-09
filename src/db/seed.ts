@@ -8,7 +8,7 @@ import {
   dealOptions,
   dealReviews,
 } from "@/db/fixtures";
-import { hashPassword } from "@/auth/password";
+import { hashPassword } from "@/utils/password";
 
 /**
  * Populates database from the fixtures.

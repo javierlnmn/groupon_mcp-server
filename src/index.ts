@@ -1,9 +1,9 @@
-import { createServer } from "@/config/server";
-import { bold, dim, green, cyan, yellow, link } from "@/config/console";
+import { createMcpApp } from "@/mcp/app";
+import { bold, dim, green, cyan, yellow, link } from "@/utils/console";
 
 const PORT = 3000;
 const baseUrl = `http://localhost:${PORT}`;
-const app = createServer(baseUrl);
+const app = createMcpApp(baseUrl);
 
 app.listen(PORT, () => {
   console.log(
