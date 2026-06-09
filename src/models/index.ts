@@ -5,3 +5,5 @@ export * from "@/models/deal-option";
 export * from "@/models/deal-review";
 export * from "@/models/user";
 export * from "@/models/deal";
+export * from "@/models/deal-comparison";
+export * from "@/models/insights";

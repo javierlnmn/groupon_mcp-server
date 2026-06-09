@@ -1,5 +1,21 @@
 import type { Database } from "better-sqlite3";
-import { Deal } from "@/models";
+import { Deal, DealComparison } from "@/models";
+
+/** Optional filters for {@link DealRepository.searchActiveDeals}. */
+export interface DealSearchFilters {
+  /** Free-text keyword matched against title/description via FTS5. */
+  query?: string;
+  /** Category slug (exact). */
+  category?: string;
+  /** Location slug (exact). */
+  location?: string;
+  /** Keep deals with at least one option priced at or below this. */
+  maxPrice?: number;
+  /** Keep deals with at least one option discounted at or above this (%). */
+  minDiscount?: number;
+  /** Cap the number of results. */
+  limit?: number;
+}
 
 /** Deal joined with its category, merchant, and location (one flat row). */
 interface JoinedDealRow {
@@ -34,26 +50,77 @@ const DEAL_SELECT = `
   JOIN locations  l ON l.id = d.location_id
 `;
 
+/** A deal's headline price — its cheapest option (0 if it somehow has none). */
+const headlinePrice = (deal: Deal): number =>
+  deal.options.length ? Math.min(...deal.options.map((o) => o.price)) : 0;
+
+/** A deal's headline discount — its largest option discount (0 if none). */
+const headlineDiscount = (deal: Deal): number =>
+  deal.options.length
+    ? Math.max(...deal.options.map((o) => o.discount_pct))
+    : 0;
+
+/**
+ * Turn a user keyword string into a safe FTS5 prefix query: alphanumeric terms
+ * only, each made a prefix match, ANDed together (e.g. "thai food" → `thai* food*`).
+ * Returns "" when nothing usable remains, so the caller can skip the FTS join.
+ */
+function toFtsQuery(raw: string): string {
+  const terms = raw.match(/[a-z0-9]+/gi) ?? [];
+  return terms.map((t) => `${t}*`).join(" ");
+}
+
 /**
  * Persistence access for deals.
  */
 export class DealRepository {
   constructor(private readonly db: Database) {}
 
-  /** Active deals, optionally filtered by a keyword in the title/description. */
-  searchActiveDeals(query?: string): Deal[] {
-    const q = query?.trim();
-    const rows = q
-      ? (this.db
-          .prepare(
-            `${DEAL_SELECT}
-             WHERE d.is_active = 1 AND (d.title LIKE @q OR d.description LIKE @q)
-             ORDER BY d.id`,
-          )
-          .all({ q: `%${q}%` }) as JoinedDealRow[])
-      : (this.db
-          .prepare(`${DEAL_SELECT} WHERE d.is_active = 1 ORDER BY d.id`)
-          .all() as JoinedDealRow[]);
+  /** Active deals matching the given filters (all optional). */
+  searchActiveDeals(filters: DealSearchFilters = {}): Deal[] {
+    const where = ["d.is_active = 1"];
+    const params: Record<string, unknown> = {};
+    let ftsJoin = "";
+    let orderBy = "ORDER BY d.id";
+
+    const fts = filters.query ? toFtsQuery(filters.query) : "";
+    if (fts) {
+      ftsJoin = "JOIN deals_fts f ON f.rowid = d.id";
+      where.push("f MATCH @q");
+      params.q = fts;
+      orderBy = "ORDER BY f.rank"; // FTS5 relevance, best matches first
+    }
+    if (filters.category) {
+      where.push("c.slug = @category");
+      params.category = filters.category;
+    }
+    if (filters.location) {
+      where.push("l.slug = @location");
+      params.location = filters.location;
+    }
+    if (filters.maxPrice !== undefined) {
+      where.push(
+        "EXISTS (SELECT 1 FROM deal_options o WHERE o.deal_id = d.id AND o.price <= @maxPrice)",
+      );
+      params.maxPrice = filters.maxPrice;
+    }
+    if (filters.minDiscount !== undefined) {
+      where.push(
+        "EXISTS (SELECT 1 FROM deal_options o WHERE o.deal_id = d.id AND o.discount_pct >= @minDiscount)",
+      );
+      params.minDiscount = filters.minDiscount;
+    }
+    let limitClause = "";
+    if (filters.limit !== undefined) {
+      limitClause = "LIMIT @limit";
+      params.limit = filters.limit;
+    }
+
+    const rows = this.db
+      .prepare(
+        `${DEAL_SELECT} ${ftsJoin} WHERE ${where.join(" AND ")} ${orderBy} ${limitClause}`,
+      )
+      .all(params) as JoinedDealRow[];
     return rows.map((r) => this.assembleDeal(r));
   }
 
@@ -63,6 +130,41 @@ export class DealRepository {
       | JoinedDealRow
       | undefined;
     return row ? this.assembleDeal(row) : null;
+  }
+
+  /** Deals for the given ids (active or not), in the order the ids were given. */
+  getDealsByIds(ids: number[]): Deal[] {
+    return ids.map((id) => this.getDeal(id)).filter((d): d is Deal => d !== null);
+  }
+
+  /** Fetch several deals and reduce them to a side-by-side comparison. */
+  compareDeals(ids: number[]): DealComparison {
+    const deals = this.getDealsByIds(ids);
+    const summary = deals.map((d) => ({
+      deal_id: d.id,
+      title: d.title,
+      price: headlinePrice(d),
+      discount_pct: headlineDiscount(d),
+      rating: d.rating,
+      reviews_count: d.reviews_count,
+    }));
+
+    const pick = (best: (a: Deal, b: Deal) => Deal): number | null =>
+      deals.length ? deals.reduce(best).id : null;
+
+    return DealComparison.parse({
+      deals,
+      summary,
+      cheapest_deal_id: pick((a, b) =>
+        headlinePrice(a) <= headlinePrice(b) ? a : b,
+      ),
+      biggest_discount_deal_id: pick((a, b) =>
+        headlineDiscount(a) >= headlineDiscount(b) ? a : b,
+      ),
+      highest_rated_deal_id: pick((a, b) =>
+        (a.rating ?? -1) >= (b.rating ?? -1) ? a : b,
+      ),
+    });
   }
 
   /** Every deal including inactive ones — a merchant-side management view. */
