@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types";
-import { DbClient } from "@/db/client";
-import { DealRepository } from "@/repositories/deal-repository";
 import { buildMcpServer } from "@/mcp/server";
 import type { UserRole } from "@/db/schema";
 
@@ -29,8 +27,7 @@ export async function mcpHandler(req: Request, res: Response): Promise<void> {
 
   if (!sessionId && isInitializeRequest(req.body)) {
     const role = (req.auth?.extra?.role as UserRole) ?? "customer";
-    const deals = new DealRepository(DbClient.getInstance().connection);
-    const server = buildMcpServer(role, deals);
+    const server = buildMcpServer(role);
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),

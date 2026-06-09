@@ -8,15 +8,23 @@ export enum ToolName {
   // Discovery (customer-facing; merchants get these too — see roleCanUse).
   SearchDeals = "search_deals",
   GetDeal = "get_deal",
+  CompareDeals = "compare_deals",
   // Merchant-only.
   ListAllDeals = "list_all_deals",
+  CategoryInsights = "category_insights",
+  FindMarketGaps = "find_market_gaps",
+  PricePositioning = "price_positioning",
 }
 
 /** The minimum role a tool is designed for — its "owning" role. */
 const TOOL_ROLE: Record<ToolName, UserRole> = {
   [ToolName.SearchDeals]: "customer",
   [ToolName.GetDeal]: "customer",
+  [ToolName.CompareDeals]: "customer",
   [ToolName.ListAllDeals]: "merchant",
+  [ToolName.CategoryInsights]: "merchant",
+  [ToolName.FindMarketGaps]: "merchant",
+  [ToolName.PricePositioning]: "merchant",
 };
 
 /** Role hierarchy: a merchant can use everything a customer can, and more. */
