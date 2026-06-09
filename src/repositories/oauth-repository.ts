@@ -34,11 +34,7 @@ export interface AccessTokenInfo {
 }
 
 /**
- * All persistence for the OAuth layer — registered clients, authorization codes,
- * issued tokens — plus the credential lookup used at login. DbOAuthProvider holds
- * the OAuth *logic* and delegates every DB touch here, so no SQL lives outside the
- * repositories/ folder. Returns persistence shapes (not domain models): OAuth
- * tokens/clients aren't domain entities.
+ * Persistence access for OAuth. OAuth tokens/clients aren't domain entities.
  */
 export class OAuthRepository {
   constructor(private readonly db: Database) {}
@@ -56,16 +52,18 @@ export class OAuthRepository {
 
   saveClient(client: OAuthClientInformationFull): void {
     this.db
-      .prepare("INSERT INTO oauth_clients (client_id, client_info) VALUES (?, ?)")
+      .prepare(
+        "INSERT INTO oauth_clients (client_id, client_info) VALUES (?, ?)",
+      )
       .run(client.client_id, JSON.stringify(client));
   }
 
   /* ── Users (login credential lookup) ─────────────────────────────────────── */
 
   findUserByEmail(email: string): UserRow | undefined {
-    return this.db
-      .prepare("SELECT * FROM users WHERE email = ?")
-      .get(email) as UserRow | undefined;
+    return this.db.prepare("SELECT * FROM users WHERE email = ?").get(email) as
+      | UserRow
+      | undefined;
   }
 
   /* ── Authorization codes ─────────────────────────────────────────────────── */
@@ -77,12 +75,21 @@ export class OAuthRepository {
            (code, client_id, user_id, code_challenge, redirect_uri, expires_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(c.code, c.clientId, c.userId, c.codeChallenge, c.redirectUri, c.expiresAt);
+      .run(
+        c.code,
+        c.clientId,
+        c.userId,
+        c.codeChallenge,
+        c.redirectUri,
+        c.expiresAt,
+      );
   }
 
   getAuthCode(code: string, clientId: string): OAuthAuthCodeRow | undefined {
     return this.db
-      .prepare("SELECT * FROM oauth_auth_codes WHERE code = ? AND client_id = ?")
+      .prepare(
+        "SELECT * FROM oauth_auth_codes WHERE code = ? AND client_id = ?",
+      )
       .get(code, clientId) as OAuthAuthCodeRow | undefined;
   }
 

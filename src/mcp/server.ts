@@ -1,25 +1,14 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { Deal } from "@/models";
+import { jsonResult, errorResult } from "@/mcp/results";
+import { ToolName, roleCanUse } from "@/mcp/tools";
 import type { DealRepository } from "@/repositories/deal-repository";
 import type { UserRole } from "@/db/schema";
 
-/** Tool result carrying domain Deals as both readable text and structured output. */
-function dealsResult(deals: Deal[]) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(deals, null, 2) }],
-    structuredContent: { deals },
-  };
-}
-
-/** Structured-output contract for the deal tools — the domain model itself. */
-const dealsOutput = { deals: z.array(Deal) };
-
 /**
  * Builds a fresh MCP server for a single session, registering only the tools the
- * session's role is allowed to use. The role is established at session creation
- * from the access token (see src/mcp/controllers.ts), so a session's tool set is
- * fixed for its lifetime — customers never even see merchant tools in tools/list.
+ * session's role is allowed to use.
  */
 export function buildMcpServer(
   role: UserRole,
@@ -27,30 +16,50 @@ export function buildMcpServer(
 ): McpServer {
   const server = new McpServer({ name: "groupon-mcp", version: "1.0.0" });
 
-  if (role === "customer") {
+  if (roleCanUse(role, ToolName.SearchDeals)) {
     server.registerTool(
-      "search_deals",
+      ToolName.SearchDeals,
       {
         title: "Search deals",
         description: "Search active Groupon deals by keyword.",
         inputSchema: { query: z.string().optional() },
-        outputSchema: dealsOutput,
+        outputSchema: { deals: z.array(Deal) },
       },
-      async ({ query }) => dealsResult(deals.searchActiveDeals(query)),
+      async ({ query }) => jsonResult({ deals: deals.searchActiveDeals(query) }),
     );
   }
 
-  if (role === "merchant") {
+  if (roleCanUse(role, ToolName.GetDeal)) {
     server.registerTool(
-      "list_all_deals",
+      ToolName.GetDeal,
+      {
+        title: "Get deal",
+        description:
+          "Full detail for one deal by id: pricing options, merchant, location, " +
+          "rating, reviews count, fine print, and validity.",
+        inputSchema: { deal_id: z.number().int().positive() },
+        outputSchema: { deal: Deal },
+      },
+      async ({ deal_id }) => {
+        const deal = deals.getDeal(deal_id);
+        return deal
+          ? jsonResult({ deal })
+          : errorResult(`No deal found with id ${deal_id}.`);
+      },
+    );
+  }
+
+  if (roleCanUse(role, ToolName.ListAllDeals)) {
+    server.registerTool(
+      ToolName.ListAllDeals,
       {
         title: "List all deals",
         description:
           "List every deal including inactive ones — merchant management view.",
         inputSchema: {},
-        outputSchema: dealsOutput,
+        outputSchema: { deals: z.array(Deal) },
       },
-      async () => dealsResult(deals.listAllDeals()),
+      async () => jsonResult({ deals: deals.listAllDeals() }),
     );
   }
 

@@ -1,11 +1,41 @@
 import type { Database } from "better-sqlite3";
 import { Deal } from "@/models";
 
+/** Deal joined with its category, merchant, and location (one flat row). */
+interface JoinedDealRow {
+  id: number;
+  title: string;
+  description: string;
+  fine_print: string | null;
+  valid_until: string | null;
+  is_active: number;
+  c_id: number;
+  c_slug: string;
+  c_name: string;
+  m_id: number;
+  m_name: string;
+  m_location_id: number;
+  l_id: number;
+  l_slug: string;
+  l_name: string;
+  l_region: string;
+}
+
+/** SQL query to join deals with categories, merchants, and locations. */
+const DEAL_SELECT = `
+  SELECT
+    d.id, d.title, d.description, d.fine_print, d.valid_until, d.is_active,
+    c.id AS c_id, c.slug AS c_slug, c.name AS c_name,
+    m.id AS m_id, m.name AS m_name, m.location_id AS m_location_id,
+    l.id AS l_id, l.slug AS l_slug, l.name AS l_name, l.region AS l_region
+  FROM deals d
+  JOIN categories c ON c.id = d.category_id
+  JOIN merchants  m ON m.id = d.merchant_id
+  JOIN locations  l ON l.id = d.location_id
+`;
+
 /**
- * All persistence access for deals lives here — the single place that knows the
- * deals/merchants/locations/options/reviews schema. It reads raw rows and returns
- * fully-assembled, Zod-validated `Deal` domain models, so callers (tools) work
- * with domain objects and never touch SQL or row shapes.
+ * Persistence access for deals.
  */
 export class DealRepository {
   constructor(private readonly db: Database) {}
@@ -25,6 +55,14 @@ export class DealRepository {
           .prepare(`${DEAL_SELECT} WHERE d.is_active = 1 ORDER BY d.id`)
           .all() as JoinedDealRow[]);
     return rows.map((r) => this.assembleDeal(r));
+  }
+
+  /** A single deal by id (active or not), or null when no such deal exists. */
+  getDeal(id: number): Deal | null {
+    const row = this.db.prepare(`${DEAL_SELECT} WHERE d.id = ?`).get(id) as
+      | JoinedDealRow
+      | undefined;
+    return row ? this.assembleDeal(row) : null;
   }
 
   /** Every deal including inactive ones — a merchant-side management view. */
@@ -75,35 +113,3 @@ export class DealRepository {
     });
   }
 }
-
-/** Deal joined with its category, merchant, and location (one flat row). */
-interface JoinedDealRow {
-  id: number;
-  title: string;
-  description: string;
-  fine_print: string | null;
-  valid_until: string | null;
-  is_active: number;
-  c_id: number;
-  c_slug: string;
-  c_name: string;
-  m_id: number;
-  m_name: string;
-  m_location_id: number;
-  l_id: number;
-  l_slug: string;
-  l_name: string;
-  l_region: string;
-}
-
-const DEAL_SELECT = /* sql */ `
-  SELECT
-    d.id, d.title, d.description, d.fine_print, d.valid_until, d.is_active,
-    c.id AS c_id, c.slug AS c_slug, c.name AS c_name,
-    m.id AS m_id, m.name AS m_name, m.location_id AS m_location_id,
-    l.id AS l_id, l.slug AS l_slug, l.name AS l_name, l.region AS l_region
-  FROM deals d
-  JOIN categories c ON c.id = d.category_id
-  JOIN merchants  m ON m.id = d.merchant_id
-  JOIN locations  l ON l.id = d.location_id
-`;

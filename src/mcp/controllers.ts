@@ -7,31 +7,26 @@ import { DealRepository } from "@/repositories/deal-repository";
 import { buildMcpServer } from "@/mcp/server";
 import type { UserRole } from "@/db/schema";
 
-/** Live streamable-HTTP sessions, keyed by the SDK-generated session id. */
+/** Live streamable-HTTP sessions. */
 const transports: Record<string, StreamableHTTPServerTransport> = {};
 
-const badRequest = (res: Response, message: string) =>
+/** JSON-RPC 400 for malformed or sessionless requests on the /mcp endpoint. */
+function badRequest(res: Response, message: string): void {
   res.status(400).json({
     jsonrpc: "2.0",
     error: { code: -32000, message },
     id: null,
   });
+}
 
-/**
- * POST /mcp — handles both the initial `initialize` (no session yet) and all
- * subsequent in-session requests. Must run behind the Bearer guard, which
- * populates req.auth; we read the user's role from it to scope the session.
- */
 export async function mcpHandler(req: Request, res: Response): Promise<void> {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
-  // Existing session → hand off to its transport.
   if (sessionId && transports[sessionId]) {
     await transports[sessionId].handleRequest(req, res, req.body);
     return;
   }
 
-  // New session: only an `initialize` request may open one.
   if (!sessionId && isInitializeRequest(req.body)) {
     const role = (req.auth?.extra?.role as UserRole) ?? "customer";
     const deals = new DealRepository(DbClient.getInstance().connection);
