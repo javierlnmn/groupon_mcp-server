@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
-import type { Database } from "better-sqlite3";
 import type {
   OAuthServerProvider,
   AuthorizationParams,
@@ -17,13 +16,7 @@ import {
   InvalidTokenError,
 } from "@modelcontextprotocol/sdk/server/auth/errors";
 import { verifyPassword } from "@/auth/password";
-import type {
-  OAuthAuthCodeRow,
-  OAuthClientRow,
-  OAuthTokenRow,
-  UserRole,
-  UserRow,
-} from "@/db/schema";
+import type { OAuthRepository } from "@/repositories/oauth-repository";
 
 const AUTH_CODE_TTL_SECONDS = 60;
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
@@ -51,34 +44,27 @@ interface PendingAuthorization {
  * An OAuth 2.1 authorization server backed by the application's SQLite DB.
  *
  * The MCP SDK's `mcpAuthRouter` owns the HTTP endpoints, PKCE validation, and
- * client_id/secret generation; this class supplies the actual logic: who the user
- * is (verified against the `users` table), and persistence of clients, codes, and
- * tokens. See src/db/schema.ts for the backing tables.
+ * client_id/secret generation; this class supplies the OAuth logic: who the user
+ * is (credentials verified against the users table), code/token issuance, and
+ * verification. All persistence is delegated to OAuthRepository.
  */
 export class DbOAuthProvider implements OAuthServerProvider {
   constructor(
-    private readonly db: Database,
+    private readonly repo: OAuthRepository,
     private readonly issuerUrl: string,
   ) {}
 
   /* ── Client store ─────────────────────────────────────────────────────────── */
 
   get clientsStore(): OAuthRegisteredClientsStore {
-    const db = this.db;
+    const repo = this.repo;
     return {
       getClient(clientId) {
-        const row = db
-          .prepare("SELECT client_info FROM oauth_clients WHERE client_id = ?")
-          .get(clientId) as Pick<OAuthClientRow, "client_info"> | undefined;
-        return row
-          ? (JSON.parse(row.client_info) as OAuthClientInformationFull)
-          : undefined;
+        return repo.getClient(clientId);
       },
       registerClient(client) {
         const full = client as OAuthClientInformationFull;
-        db.prepare(
-          "INSERT INTO oauth_clients (client_id, client_info) VALUES (?, ?)",
-        ).run(full.client_id, JSON.stringify(full));
+        repo.saveClient(full);
         return full;
       },
     };
@@ -117,18 +103,13 @@ export class DbOAuthProvider implements OAuthServerProvider {
 
     // Re-validate the client and redirect_uri — these came back through the form
     // and must not be trusted blindly.
-    const client = this.clientsStore.getClient(pending.clientId) as
-      | OAuthClientInformationFull
-      | undefined;
+    const client = this.repo.getClient(pending.clientId);
     if (!client || !client.redirect_uris.includes(pending.redirectUri)) {
       res.status(400).send("Invalid client or redirect_uri.");
       return;
     }
 
-    const user = this.db
-      .prepare("SELECT * FROM users WHERE email = ?")
-      .get(email) as UserRow | undefined;
-
+    const user = this.repo.findUserByEmail(email);
     if (!user || !verifyPassword(password, user.password_hash)) {
       res
         .status(401)
@@ -139,20 +120,14 @@ export class DbOAuthProvider implements OAuthServerProvider {
 
     // Credentials good → mint a single-use authorization code.
     const code = newToken();
-    this.db
-      .prepare(
-        `INSERT INTO oauth_auth_codes
-           (code, client_id, user_id, code_challenge, redirect_uri, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        code,
-        pending.clientId,
-        user.id,
-        pending.codeChallenge,
-        pending.redirectUri,
-        nowSeconds() + AUTH_CODE_TTL_SECONDS,
-      );
+    this.repo.saveAuthCode({
+      code,
+      clientId: pending.clientId,
+      userId: user.id,
+      codeChallenge: pending.codeChallenge,
+      redirectUri: pending.redirectUri,
+      expiresAt: nowSeconds() + AUTH_CODE_TTL_SECONDS,
+    });
 
     const redirect = new URL(pending.redirectUri);
     redirect.searchParams.set("code", code);
@@ -167,7 +142,8 @@ export class DbOAuthProvider implements OAuthServerProvider {
     client: OAuthClientInformationFull,
     authorizationCode: string,
   ): Promise<string> {
-    const row = this.getAuthCode(authorizationCode, client.client_id);
+    const row = this.repo.getAuthCode(authorizationCode, client.client_id);
+    if (!row) throw new InvalidGrantError("Invalid authorization code");
     return row.code_challenge;
   }
 
@@ -177,17 +153,18 @@ export class DbOAuthProvider implements OAuthServerProvider {
     _codeVerifier?: string,
     redirectUri?: string,
   ): Promise<OAuthTokens> {
-    const row = this.getAuthCode(authorizationCode, client.client_id);
+    const row = this.repo.getAuthCode(authorizationCode, client.client_id);
+    if (!row) throw new InvalidGrantError("Invalid authorization code");
 
     if (row.expires_at <= nowSeconds()) {
-      this.deleteAuthCode(authorizationCode);
+      this.repo.deleteAuthCode(authorizationCode);
       throw new InvalidGrantError("Authorization code has expired");
     }
     if (redirectUri !== undefined && redirectUri !== row.redirect_uri) {
       throw new InvalidGrantError("redirect_uri does not match");
     }
 
-    this.deleteAuthCode(authorizationCode);
+    this.repo.deleteAuthCode(authorizationCode); // single use
 
     return this.issueTokens(client.client_id, row.user_id);
   }
@@ -196,18 +173,11 @@ export class DbOAuthProvider implements OAuthServerProvider {
     client: OAuthClientInformationFull,
     refreshToken: string,
   ): Promise<OAuthTokens> {
-    const row = this.db
-      .prepare(
-        "SELECT * FROM oauth_tokens WHERE refresh_token = ? AND client_id = ?",
-      )
-      .get(refreshToken, client.client_id) as OAuthTokenRow | undefined;
-
+    const row = this.repo.findByRefreshToken(refreshToken, client.client_id);
     if (!row) throw new InvalidGrantError("Invalid refresh token");
 
     // Rotate: drop the old row, issue a fresh access/refresh pair.
-    this.db
-      .prepare("DELETE FROM oauth_tokens WHERE access_token = ?")
-      .run(row.access_token);
+    this.repo.deleteAccessToken(row.access_token);
 
     return this.issueTokens(client.client_id, row.user_id);
   }
@@ -215,35 +185,22 @@ export class DbOAuthProvider implements OAuthServerProvider {
   // ── Verification / revocation ────────────────────────────────────────────────
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
-    // Join users so the caller's role rides along on the auth info — the tool
-    // layer reads it from req.auth.extra.role to gate tools per role.
-    const row = this.db
-      .prepare(
-        `SELECT t.client_id, t.user_id, t.expires_at, u.role
-         FROM oauth_tokens t
-         JOIN users u ON u.id = t.user_id
-         WHERE t.access_token = ?`,
-      )
-      .get(token) as
-      | (Pick<OAuthTokenRow, "client_id" | "user_id" | "expires_at"> & {
-          role: UserRole;
-        })
-      | undefined;
+    // The lookup carries the owning user's role, which rides along on the auth
+    // info — the tool layer reads it from req.auth.extra.role to gate tools.
+    const info = this.repo.getAccessToken(token);
 
-    if (!row) throw new InvalidTokenError("Invalid access token");
-    if (row.expires_at <= nowSeconds()) {
-      this.db
-        .prepare("DELETE FROM oauth_tokens WHERE access_token = ?")
-        .run(token);
+    if (!info) throw new InvalidTokenError("Invalid access token");
+    if (info.expiresAt <= nowSeconds()) {
+      this.repo.deleteAccessToken(token);
       throw new InvalidTokenError("Access token has expired");
     }
 
     return {
       token,
-      clientId: row.client_id,
+      clientId: info.clientId,
       scopes: [],
-      expiresAt: row.expires_at,
-      extra: { userId: row.user_id, role: row.role },
+      expiresAt: info.expiresAt,
+      extra: { userId: info.userId, role: info.role },
     };
   }
 
@@ -251,43 +208,17 @@ export class DbOAuthProvider implements OAuthServerProvider {
     client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest,
   ): Promise<void> {
-    // Match on either token type; scoped to the requesting client.
-    this.db
-      .prepare(
-        `DELETE FROM oauth_tokens
-         WHERE client_id = ? AND (access_token = ? OR refresh_token = ?)`,
-      )
-      .run(client.client_id, request.token, request.token);
+    this.repo.revoke(client.client_id, request.token);
   }
 
   // ── Internals ────────────────────────────────────────────────────────────────
-
-  private getAuthCode(code: string, clientId: string): OAuthAuthCodeRow {
-    const row = this.db
-      .prepare(
-        "SELECT * FROM oauth_auth_codes WHERE code = ? AND client_id = ?",
-      )
-      .get(code, clientId) as OAuthAuthCodeRow | undefined;
-    if (!row) throw new InvalidGrantError("Invalid authorization code");
-    return row;
-  }
-
-  private deleteAuthCode(code: string): void {
-    this.db.prepare("DELETE FROM oauth_auth_codes WHERE code = ?").run(code);
-  }
 
   private issueTokens(clientId: string, userId: number): OAuthTokens {
     const accessToken = newToken();
     const refreshToken = newToken();
     const expiresAt = nowSeconds() + ACCESS_TOKEN_TTL_SECONDS;
 
-    this.db
-      .prepare(
-        `INSERT INTO oauth_tokens
-           (access_token, refresh_token, client_id, user_id, expires_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(accessToken, refreshToken, clientId, userId, expiresAt);
+    this.repo.saveToken({ accessToken, refreshToken, clientId, userId, expiresAt });
 
     return {
       access_token: accessToken,
