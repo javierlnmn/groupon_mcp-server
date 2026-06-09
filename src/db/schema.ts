@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY,
   name          TEXT NOT NULL,
   email         TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL
+  password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('customer', 'merchant'))
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -110,11 +111,14 @@ CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_toke
  * Table row shapes. Persistence source of truth.
  */
 
+export type UserRole = "customer" | "merchant";
+
 export interface UserRow {
   id: number;
   name: string;
   email: string;
   password_hash: string;
+  role: UserRole;
 }
 
 export interface CategoryRow {

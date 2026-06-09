@@ -21,6 +21,7 @@ import type {
   OAuthAuthCodeRow,
   OAuthClientRow,
   OAuthTokenRow,
+  UserRole,
   UserRow,
 } from "@/db/schema";
 
@@ -214,9 +215,20 @@ export class DbOAuthProvider implements OAuthServerProvider {
   // ── Verification / revocation ────────────────────────────────────────────────
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
+    // Join users so the caller's role rides along on the auth info — the tool
+    // layer reads it from req.auth.extra.role to gate tools per role.
     const row = this.db
-      .prepare("SELECT * FROM oauth_tokens WHERE access_token = ?")
-      .get(token) as OAuthTokenRow | undefined;
+      .prepare(
+        `SELECT t.client_id, t.user_id, t.expires_at, u.role
+         FROM oauth_tokens t
+         JOIN users u ON u.id = t.user_id
+         WHERE t.access_token = ?`,
+      )
+      .get(token) as
+      | (Pick<OAuthTokenRow, "client_id" | "user_id" | "expires_at"> & {
+          role: UserRole;
+        })
+      | undefined;
 
     if (!row) throw new InvalidTokenError("Invalid access token");
     if (row.expires_at <= nowSeconds()) {
@@ -231,7 +243,7 @@ export class DbOAuthProvider implements OAuthServerProvider {
       clientId: row.client_id,
       scopes: [],
       expiresAt: row.expires_at,
-      extra: { userId: row.user_id },
+      extra: { userId: row.user_id, role: row.role },
     };
   }
 

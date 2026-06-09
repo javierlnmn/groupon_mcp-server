@@ -12,7 +12,9 @@ import type {
 } from "@/db/schema";
 
 /** Seed users carry a plaintext dev password; seed.ts hashes it into password_hash. */
-type UserSeed = Pick<UserRow, "id" | "name" | "email"> & { password: string };
+type UserSeed = Pick<UserRow, "id" | "name" | "email" | "role"> & {
+  password: string;
+};
 type CategorySeed = CategoryRow;
 type LocationSeed = LocationRow;
 type MerchantSeed = MerchantRow;
@@ -21,12 +23,12 @@ type DealReviewSeed = DealReviewRow;
 type DealOptionSeed = Omit<DealOptionRow, "discount_pct">;
 
 export const users: UserSeed[] = [
-  { id: 1, name: "Laura G.", email: "laura@example.com", password: "password123" },
-  { id: 2, name: "Carlos M.", email: "carlos@example.com", password: "password123" },
-  { id: 3, name: "Ana R.", email: "ana@example.com", password: "password123" },
-  { id: 4, name: "Javier S.", email: "javier@example.com", password: "password123" },
-  { id: 5, name: "Marta L.", email: "marta@example.com", password: "password123" },
-  { id: 6, name: "Diego P.", email: "diego@example.com", password: "password123" },
+  { id: 1, name: "Laura G.", email: "laura@example.com", password: "password123", role: "customer" },
+  { id: 2, name: "Carlos M.", email: "carlos@example.com", password: "password123", role: "customer" },
+  { id: 3, name: "Ana R.", email: "ana@example.com", password: "password123", role: "customer" },
+  { id: 4, name: "Javier S.", email: "javier@example.com", password: "password123", role: "merchant" },
+  { id: 5, name: "Marta L.", email: "marta@example.com", password: "password123", role: "merchant" },
+  { id: 6, name: "Diego P.", email: "diego@example.com", password: "password123", role: "customer" },
 ];
 
 export const categories: CategorySeed[] = [

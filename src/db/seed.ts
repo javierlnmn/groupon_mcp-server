@@ -15,8 +15,8 @@ import { hashPassword } from "@/auth/password";
  */
 export function seed(db: Database): void {
   const insertUser = db.prepare(
-    "INSERT INTO users (id, name, email, password_hash) " +
-      "VALUES (@id, @name, @email, @password_hash)",
+    "INSERT INTO users (id, name, email, password_hash, role) " +
+      "VALUES (@id, @name, @email, @password_hash, @role)",
   );
   const insertCategory = db.prepare(
     "INSERT INTO categories (id, slug, name) VALUES (@id, @slug, @name)",
@@ -52,6 +52,7 @@ export function seed(db: Database): void {
         name: u.name,
         email: u.email,
         password_hash: hashPassword(u.password),
+        role: u.role,
       });
     }
     for (const c of categories) insertCategory.run(c);
