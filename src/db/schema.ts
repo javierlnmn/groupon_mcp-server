@@ -3,8 +3,10 @@
  */
 export const SCHEMA_SQL = /* sql */ `
 CREATE TABLE IF NOT EXISTS users (
-  id   INTEGER PRIMARY KEY,
-  name TEXT NOT NULL
+  id            INTEGER PRIMARY KEY,
+  name          TEXT NOT NULL,
+  email         TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS categories (
@@ -70,6 +72,38 @@ CREATE VIRTUAL TABLE IF NOT EXISTS deals_fts USING fts5(
   content_rowid='id',
   tokenize='unicode61 remove_diacritics 2'
 );
+
+-- ── OAuth / authorization layer ──────────────────────────────────────────────
+-- The MCP server doubles as its own OAuth 2.1 authorization server. These tables
+-- back the DbOAuthProvider; all rows are ephemeral (the DB is rebuilt per launch).
+
+-- Dynamically-registered OAuth clients. We store the full client metadata blob
+-- (OAuthClientInformationFull) the SDK hands us, keyed by its generated client_id.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id   TEXT PRIMARY KEY,
+  client_info TEXT NOT NULL
+);
+
+-- Short-lived authorization codes issued after a successful login.
+CREATE TABLE IF NOT EXISTS oauth_auth_codes (
+  code           TEXT PRIMARY KEY,
+  client_id      TEXT    NOT NULL,
+  user_id        INTEGER NOT NULL REFERENCES users(id),
+  code_challenge TEXT    NOT NULL,
+  redirect_uri   TEXT    NOT NULL,
+  expires_at     INTEGER NOT NULL
+);
+
+-- Issued access/refresh tokens. Opaque random strings, verified by lookup.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  access_token  TEXT PRIMARY KEY,
+  refresh_token TEXT UNIQUE,
+  client_id     TEXT    NOT NULL,
+  user_id       INTEGER NOT NULL REFERENCES users(id),
+  expires_at    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_token);
 `;
 
 /**
@@ -79,6 +113,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS deals_fts USING fts5(
 export interface UserRow {
   id: number;
   name: string;
+  email: string;
+  password_hash: string;
 }
 
 export interface CategoryRow {
@@ -128,4 +164,31 @@ export interface DealReviewRow {
   rating: number;
   comment: string | null;
   created_at: string;
+}
+
+/* OAuth layer row shapes. */
+
+export interface OAuthClientRow {
+  client_id: string;
+  /** JSON-serialized OAuthClientInformationFull. */
+  client_info: string;
+}
+
+export interface OAuthAuthCodeRow {
+  code: string;
+  client_id: string;
+  user_id: number;
+  code_challenge: string;
+  redirect_uri: string;
+  /** Unix seconds. */
+  expires_at: number;
+}
+
+export interface OAuthTokenRow {
+  access_token: string;
+  refresh_token: string | null;
+  client_id: string;
+  user_id: number;
+  /** Unix seconds. */
+  expires_at: number;
 }

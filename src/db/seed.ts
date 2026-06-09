@@ -8,13 +8,15 @@ import {
   dealOptions,
   dealReviews,
 } from "@/db/fixtures";
+import { hashPassword } from "@/auth/password";
 
 /**
  * Populates database from the fixtures.
  */
 export function seed(db: Database): void {
   const insertUser = db.prepare(
-    "INSERT INTO users (id, name) VALUES (@id, @name)",
+    "INSERT INTO users (id, name, email, password_hash) " +
+      "VALUES (@id, @name, @email, @password_hash)",
   );
   const insertCategory = db.prepare(
     "INSERT INTO categories (id, slug, name) VALUES (@id, @slug, @name)",
@@ -44,7 +46,14 @@ export function seed(db: Database): void {
   `);
 
   const seedAll = db.transaction(() => {
-    for (const u of users) insertUser.run(u);
+    for (const u of users) {
+      insertUser.run({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        password_hash: hashPassword(u.password),
+      });
+    }
     for (const c of categories) insertCategory.run(c);
     for (const l of locations) insertLocation.run(l);
     for (const m of merchants) insertMerchant.run(m);
