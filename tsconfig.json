@@ -5,11 +5,10 @@
     "target": "ES2023",
     "strict": true,
     "esModuleInterop": true,
-    "outDir": "./build",
+    "outDir": "./dist",
     "rootDir": "./src",
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     },
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
