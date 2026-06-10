@@ -42,15 +42,18 @@ Inside `mcp/`:
 
 **Key design choices**
 
+- **Streamable HTTP as transport.** The features offered by this MCP server
+  may be consumed by external applications or sevices. That is why, rather than
+  sticking to `StdioServerTransport` for development purposes, I chose
+  `StreamableHTTPServerTransport` to offer a more production-like implementation.
 - **SQLite, on purpose.** An in‑memory SQLite database keeps the project
   dependency‑free and trivial to run, so the focus stays on the part that
   matters — the MCP tools and the deal‑intelligence logic — instead of standing
-  up external infrastructure. It still exercises a *real, structured* data layer
-  (SQL, joins, FTS5, a proper repository boundary returning validated models),
+  up external infrastructure. It still exercises a *real, structured* data layer,
   so the architecture is representative rather than a throwaway in‑memory array.
-- **Ephemeral data.** That database is rebuilt + seeded on every launch — great
-  for a deterministic demo, but note every restart invalidates issued OAuth
-  tokens (you re‑authenticate after a restart).
+  That database is rebuilt + seeded on every launch — great for a deterministic demo,
+  but note every restart invalidates issued OAuth tokens (you re‑authenticate
+  after a restart)
 - **Per‑session, role‑scoped servers.** Each session gets a fresh MCP server;
   the role comes from the access token, so the tool set is decided once and
   fixed for the session. Merchants are a superset of customers.
